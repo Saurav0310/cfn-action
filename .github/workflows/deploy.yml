@@ -12,10 +12,18 @@ on:
           - dev
           - stg
           - prod
+      action:
+        description: "Action to perform"
+        required: true
+        default: "deploy"
+        type: choice
+        options:
+          - deploy
+          - destroy
 
 jobs:
-  deploy:
-    name: Deploy to ${{ github.event.inputs.environment }}
+  manage:
+    name: ${{ github.event.inputs.action }} to ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
 
     env:
@@ -52,11 +60,20 @@ jobs:
           aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy CloudFormation stack
+      - name: Deploy or Destroy CloudFormation stack
         run: |
-          aws cloudformation deploy \
-            --template-file $CFN_TEMPLATE \
-            --stack-name $STACK_NAME \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --parameter-overrides file://parameters-${{ env.ENVIRONMENT }}.json \
-            --no-fail-on-empty-changeset
+          if [ "${{ github.event.inputs.action }}" == "deploy" ]; then
+            echo "Deploying stack: $STACK_NAME"
+            aws cloudformation deploy \
+              --template-file $CFN_TEMPLATE \
+              --stack-name $STACK_NAME \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --parameter-overrides file://parameters-${{ env.ENVIRONMENT }}.json \
+              --no-fail-on-empty-changeset
+          else
+            echo "Deleting stack: $STACK_NAME"
+            aws cloudformation delete-stack --stack-name $STACK_NAME
+            echo "Waiting for stack deletion to complete..."
+            aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME
+            echo "Stack $STACK_NAME deleted successfully."
+          fi
