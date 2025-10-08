@@ -2,5 +2,9 @@
   {
     "ParameterKey": "EnvironmentName",
     "ParameterValue": "prod"
+  },
+  {
+    "ParameterKey": "BucketName",
+    "ParameterValue": "myapp-prod-bucket"
   }
 ]
