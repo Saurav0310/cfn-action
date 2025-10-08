@@ -2,5 +2,9 @@
   {
     "ParameterKey": "EnvironmentName",
     "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "BucketName",
+    "ParameterValue": "myapp-dev-bucket"
   }
 ]
