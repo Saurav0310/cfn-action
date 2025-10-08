@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Target environment (dev, stg, prod)"
+        description: "Target environment"
         required: true
         default: "dev"
         type: choice
@@ -12,8 +12,17 @@ on:
           - dev
           - stg
           - prod
+      template:
+        description: "CloudFormation template to deploy"
+        required: true
+        default: "s3"
+        type: choice
+        options:
+          - s3
+          - dynamodb
+          - lambda
       action:
-        description: "Action to perform"
+        description: "Deploy or destroy"
         required: true
         default: "deploy"
         type: choice
@@ -23,57 +32,54 @@ on:
 
 jobs:
   manage:
-    name: ${{ github.event.inputs.action }} to ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
 
-    env:
-      CFN_TEMPLATE: infra/template.yaml
-      AWS_REGION: us-east-1
-
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set environment AWS credentials
+      - name: Set environment and template variables
         run: |
-          ENV=${{ github.event.inputs.environment }}
-          echo "ENVIRONMENT=$ENV" >> $GITHUB_ENV
+          echo "ENV=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          echo "TEMPLATE=${{ github.event.inputs.template }}" >> $GITHUB_ENV
+          echo "STACK_NAME=${{ github.event.inputs.template }}-${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          echo "PARAM_FILE=parameters/${{ github.event.inputs.template }}-${{ github.event.inputs.environment }}.json" >> $GITHUB_ENV
+          echo "TEMPLATE_PATH=infra/${{ github.event.inputs.template }}/${{ github.event.inputs.template }}-template.yaml" >> $GITHUB_ENV
 
+      - name: Set AWS credentials
+        run: |
+          ENV=$ENV
           if [ "$ENV" == "dev" ]; then
             echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID_DEV }}" >> $GITHUB_ENV
             echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY_DEV }}" >> $GITHUB_ENV
-            echo "STACK_NAME=s3-bucket-dev" >> $GITHUB_ENV
           elif [ "$ENV" == "stg" ]; then
             echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID_STG }}" >> $GITHUB_ENV
             echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY_STG }}" >> $GITHUB_ENV
-            echo "STACK_NAME=s3-bucket-stg" >> $GITHUB_ENV
           elif [ "$ENV" == "prod" ]; then
             echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID_PROD }}" >> $GITHUB_ENV
             echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}" >> $GITHUB_ENV
-            echo "STACK_NAME=s3-bucket-prod" >> $GITHUB_ENV
           fi
 
-      - name: Configure AWS credentials
+      - name: Configure AWS CLI
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: us-east-1
 
-      - name: Deploy or Destroy CloudFormation stack
+      - name: Deploy or Destroy CloudFormation Stack
         run: |
           if [ "${{ github.event.inputs.action }}" == "deploy" ]; then
-            echo "Deploying stack: $STACK_NAME"
+            echo "Deploying stack $STACK_NAME using template $TEMPLATE_PATH"
             aws cloudformation deploy \
-              --template-file $CFN_TEMPLATE \
               --stack-name $STACK_NAME \
+              --template-file $TEMPLATE_PATH \
               --capabilities CAPABILITY_NAMED_IAM \
-              --parameter-overrides file://parameters-${{ env.ENVIRONMENT }}.json \
+              --parameter-overrides file://$PARAM_FILE \
               --no-fail-on-empty-changeset
           else
-            echo "Deleting stack: $STACK_NAME"
+            echo "Deleting stack $STACK_NAME"
             aws cloudformation delete-stack --stack-name $STACK_NAME
-            echo "Waiting for stack deletion to complete..."
             aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME
-            echo "Stack $STACK_NAME deleted successfully."
+            echo "Stack $STACK_NAME deleted"
           fi
