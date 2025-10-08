@@ -1,19 +1,15 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Simple S3 bucket example
+Description: Simple S3 bucket example (auto-generates unique bucket name)
 
 Parameters:
   EnvironmentName:
     Type: String
     Description: The name of the environment (dev, stg, prod)
-  BucketName:
-    Type: String
-    Description: The name of the S3 bucket
 
 Resources:
   S3Bucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Ref BucketName
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
