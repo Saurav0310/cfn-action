@@ -1,20 +1,129 @@
+# AWSTemplateFormatVersion: '2010-09-09'
+# Description: Simple S3 bucket example (auto-generates unique bucket name)
+
+# Parameters:
+#   EnvironmentName:
+#     Type: String
+#     Description: The name of the environment (dev, stg, prod)
+
+# Resources:
+#   S3Bucket:
+#     Type: AWS::S3::Bucket
+#     Properties:
+#       Tags:
+#         - Key: Environment
+#           Value: !Ref EnvironmentName
+
+# Outputs:
+#   BucketName:
+#     Description: The created bucket name
+#     Value: !Ref S3Bucket
+
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Simple S3 bucket example (auto-generates unique bucket name)
+Description: >
+  End-to-End Data Lake Stack:
+  - S3 bucket for raw data
+  - Glue Database and Crawler (auto-detect schema)
+  - Athena Workgroup for querying
 
 Parameters:
   EnvironmentName:
     Type: String
-    Description: The name of the environment (dev, stg, prod)
+    Description: The environment name (dev, stg, prod)
 
 Resources:
-  S3Bucket:
+  # -------------------------------
+  # S3 Bucket (Data Lake)
+  # -------------------------------
+  DataLakeBucket:
     Type: AWS::S3::Bucket
     Properties:
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
 
+  # -------------------------------
+  # IAM Role for Glue
+  # -------------------------------
+  GlueServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "glue-service-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${DataLakeBucket}"
+                  - !Sub "arn:aws:s3:::${DataLakeBucket}/*"
+
+  # -------------------------------
+  # Glue Database
+  # -------------------------------
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref "AWS::AccountId"
+      DatabaseInput:
+        Name: !Sub "datalake_${EnvironmentName}"
+        Description: Glue database for ${EnvironmentName} environment
+
+  # -------------------------------
+  # Glue Crawler (Auto-detect schema)
+  # -------------------------------
+  GlueCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: !Sub "crawler-${EnvironmentName}"
+      Role: !GetAtt GlueServiceRole.Arn
+      DatabaseName: !Ref GlueDatabase
+      Targets:
+        S3Targets:
+          - Path: !Sub "s3://${DataLakeBucket}/"
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+
+  # -------------------------------
+  # Athena Workgroup
+  # -------------------------------
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub "athena_${EnvironmentName}"
+      WorkGroupConfiguration:
+        ResultConfiguration:
+          OutputLocation: !Sub "s3://${DataLakeBucket}/athena-results/"
+        EnforceWorkGroupConfiguration: true
+
 Outputs:
   BucketName:
-    Description: The created bucket name
-    Value: !Ref S3Bucket
+    Description: The S3 bucket name
+    Value: !Ref DataLakeBucket
+
+  GlueDatabaseName:
+    Description: Glue database
+    Value: !Ref GlueDatabase
+
+  GlueCrawlerName:
+    Description: Glue crawler
+    Value: !Ref GlueCrawler
+
+  AthenaWorkGroupName:
+    Description: Athena workgroup
+    Value: !Ref AthenaWorkGroup
