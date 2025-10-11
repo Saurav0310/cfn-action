@@ -1,3 +1,89 @@
+# name: Deploy S3 CloudFormation
+
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       environment:
+#         description: "Target environment"
+#         required: true
+#         default: "dev"
+#         type: choice
+#         options:
+#           - dev
+#           - stg
+#           - prod
+#       template:
+#         description: "CloudFormation template to deploy"
+#         required: true
+#         default: "s3"
+#         type: choice
+#         options:
+#           - s3
+#           - dynamodb
+#           - lambda
+#       action:
+#         description: "Deploy or destroy"
+#         required: true
+#         default: "deploy"
+#         type: choice
+#         options:
+#           - deploy
+#           - destroy
+
+# jobs:
+#   manage:
+#     runs-on: aws
+
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+
+#       - name: Set environment and template variables
+#         run: |
+#           echo "ENV=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+#           echo "TEMPLATE=${{ github.event.inputs.template }}" >> $GITHUB_ENV
+#           echo "STACK_NAME=${{ github.event.inputs.template }}-${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+#           echo "PARAM_FILE=parameters/${{ github.event.inputs.template }}-${{ github.event.inputs.environment }}.json" >> $GITHUB_ENV
+#           echo "TEMPLATE_PATH=infra/${{ github.event.inputs.template }}/${{ github.event.inputs.template }}-template.yaml" >> $GITHUB_ENV
+
+#       - name: Set AWS credentials
+#         run: |
+#           ENV=$ENV
+#           if [ "$ENV" == "dev" ]; then
+#             echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID_DEV }}" >> $GITHUB_ENV
+#             echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY_DEV }}" >> $GITHUB_ENV
+#           elif [ "$ENV" == "stg" ]; then
+#             echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID_STG }}" >> $GITHUB_ENV
+#             echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY_STG }}" >> $GITHUB_ENV
+#           elif [ "$ENV" == "prod" ]; then
+#             echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID_PROD }}" >> $GITHUB_ENV
+#             echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}" >> $GITHUB_ENV
+#           fi
+
+#       # - name: Configure AWS CLI
+#       #   uses: aws-actions/configure-aws-credentials@v4
+#       #   with:
+#       #     aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+#       #     aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+#       #     aws-region: us-east-1
+
+#       - name: Deploy or Destroy CloudFormation Stack
+#         run: |
+#           if [ "${{ github.event.inputs.action }}" == "deploy" ]; then
+#             echo "Deploying stack $STACK_NAME using template $TEMPLATE_PATH"
+#             aws cloudformation deploy \
+#               --stack-name $STACK_NAME \
+#               --template-file $TEMPLATE_PATH \
+#               --capabilities CAPABILITY_NAMED_IAM \
+#               --parameter-overrides file://$PARAM_FILE \
+#               --no-fail-on-empty-changeset
+#           else
+#             echo "Deleting stack $STACK_NAME"
+#             aws cloudformation delete-stack --stack-name $STACK_NAME
+#             aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME
+#             echo "Stack $STACK_NAME deleted"
+#           fi
+
 name: Deploy S3 CloudFormation
 
 on:
@@ -21,6 +107,7 @@ on:
           - s3
           - dynamodb
           - lambda
+          - glue
       action:
         description: "Deploy or destroy"
         required: true
@@ -32,13 +119,25 @@ on:
 
 jobs:
   manage:
-    runs-on: aws
+    runs-on: aws  # your EC2 self-hosted runner label
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set environment and template variables
+      # 🔒 Step 1: Clean up any existing AWS credentials
+      - name: Clean up AWS credentials
+        run: |
+          echo "Cleaning up any existing AWS credentials..."
+          rm -rf ~/.aws || true
+          unset AWS_ACCESS_KEY_ID || true
+          unset AWS_SECRET_ACCESS_KEY || true
+          unset AWS_SESSION_TOKEN || true
+          unset AWS_PROFILE || true
+          echo "✅ AWS credentials cleaned. The runner will now use the EC2 IAM Role."
+
+      # Step 2: Set environment variables dynamically
+      - name: Set environment variables
         run: |
           echo "ENV=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
           echo "TEMPLATE=${{ github.event.inputs.template }}" >> $GITHUB_ENV
@@ -46,27 +145,14 @@ jobs:
           echo "PARAM_FILE=parameters/${{ github.event.inputs.template }}-${{ github.event.inputs.environment }}.json" >> $GITHUB_ENV
           echo "TEMPLATE_PATH=infra/${{ github.event.inputs.template }}/${{ github.event.inputs.template }}-template.yaml" >> $GITHUB_ENV
 
-      - name: Set AWS credentials
+      # 🔍 Step 3: Verify AWS Identity (ensures IAM Role is being used)
+      - name: Verify AWS Identity
         run: |
-          ENV=$ENV
-          if [ "$ENV" == "dev" ]; then
-            echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID_DEV }}" >> $GITHUB_ENV
-            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY_DEV }}" >> $GITHUB_ENV
-          elif [ "$ENV" == "stg" ]; then
-            echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID_STG }}" >> $GITHUB_ENV
-            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY_STG }}" >> $GITHUB_ENV
-          elif [ "$ENV" == "prod" ]; then
-            echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID_PROD }}" >> $GITHUB_ENV
-            echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}" >> $GITHUB_ENV
-          fi
+          echo "Verifying AWS credentials source..."
+          aws sts get-caller-identity || (echo "❌ AWS CLI not authenticated"; exit 1)
+          echo "✅ Verified IAM Role authentication."
 
-      # - name: Configure AWS CLI
-      #   uses: aws-actions/configure-aws-credentials@v4
-      #   with:
-      #     aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
-      #     aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
-      #     aws-region: us-east-1
-
+      # 🚀 Step 4: Deploy or Destroy CloudFormation Stack
       - name: Deploy or Destroy CloudFormation Stack
         run: |
           if [ "${{ github.event.inputs.action }}" == "deploy" ]; then
@@ -81,5 +167,6 @@ jobs:
             echo "Deleting stack $STACK_NAME"
             aws cloudformation delete-stack --stack-name $STACK_NAME
             aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME
-            echo "Stack $STACK_NAME deleted"
+            echo "✅ Stack $STACK_NAME deleted successfully"
           fi
+
