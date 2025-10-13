@@ -1,13 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  End-to-End Data Lake Stack:
-  - Imports existing secure S3 bucket from another stack
-  - Creates Glue Database and Crawler (auto-detect schema)
+  End-to-End Data Lake Glue Stack
+  - Imports S3 Data Lake bucket automatically (based on environment)
+  - Creates Glue Database and Crawler to auto-detect schema
 
 Parameters:
   EnvironmentName:
     Type: String
-    Description: The environment name (dev, stg, prod)
+    Description: Environment name (e.g. dev, stg, prod)
 
 Resources:
   # -------------------------------
@@ -37,12 +37,14 @@ Resources:
                   - s3:PutObject
                   - s3:ListBucket
                 Resource:
-                  - !ImportValue
-                    Fn::Sub: "${S3StackName}-S3BucketArn"
                   - !Sub
-                    - "${BucketArn}/*"
-                    - BucketArn: !ImportValue
-                        Fn::Sub: "${S3StackName}-S3BucketArn"
+                    - '${S3BucketArn}'
+                    - S3BucketArn:
+                        Fn::ImportValue: !Sub 's3-${EnvironmentName}-S3BucketArn'
+                  - !Sub
+                    - '${S3BucketArn}/*'
+                    - S3BucketArn:
+                        Fn::ImportValue: !Sub 's3-${EnvironmentName}-S3BucketArn'
 
   # -------------------------------
   # Glue Database
@@ -56,7 +58,7 @@ Resources:
         Description: !Sub "Glue database for ${EnvironmentName} environment"
 
   # -------------------------------
-  # Glue Crawler (Auto-detect schema)
+  # Glue Crawler
   # -------------------------------
   GlueCrawler:
     Type: AWS::Glue::Crawler
@@ -67,18 +69,18 @@ Resources:
       Targets:
         S3Targets:
           - Path: !Sub
-              - "s3://${BucketName}/"
-              - BucketName: !ImportValue
-                  Fn::Sub: "${S3StackName}-S3BucketName"
+              - 's3://${S3BucketName}/'
+              - S3BucketName:
+                  Fn::ImportValue: !Sub 's3-${EnvironmentName}-S3BucketName'
       SchemaChangePolicy:
         UpdateBehavior: UPDATE_IN_DATABASE
         DeleteBehavior: LOG
 
 Outputs:
   GlueDatabaseName:
-    Description: Glue database name
+    Description: Glue Database name
     Value: !Ref GlueDatabase
 
   GlueCrawlerName:
-    Description: Glue crawler name
+    Description: Glue Crawler name
     Value: !Ref GlueCrawler
