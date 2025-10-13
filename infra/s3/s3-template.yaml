@@ -94,11 +94,6 @@ Resources:
             - Id: VersionedObjectRule
               Status: Enabled
               ExpirationInDays: !Ref VersionedObjectExpiration
-              NoncurrentVersionTransitions:
-                - NoncurrentDays: 30
-                  StorageClass: STANDARD_IA
-                - NoncurrentDays: 60
-                  StorageClass: GLACIER_IR
               AbortIncompleteMultipartUpload:
                 DaysAfterInitiation: 7
           - !If
