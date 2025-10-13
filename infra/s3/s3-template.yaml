@@ -1,129 +1,155 @@
-# AWSTemplateFormatVersion: '2010-09-09'
-# Description: Simple S3 bucket example (auto-generates unique bucket name)
-
-# Parameters:
-#   EnvironmentName:
-#     Type: String
-#     Description: The name of the environment (dev, stg, prod)
-
-# Resources:
-#   S3Bucket:
-#     Type: AWS::S3::Bucket
-#     Properties:
-#       Tags:
-#         - Key: Environment
-#           Value: !Ref EnvironmentName
-
-# Outputs:
-#   BucketName:
-#     Description: The created bucket name
-#     Value: !Ref S3Bucket
-
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  End-to-End Data Lake Stack:
-  - S3 bucket for raw data
-  - Glue Database and Crawler (auto-detect schema)
-  - Athena Workgroup for querying
+  End-to-End Secure Data Lake S3 Bucket Stack
+  - Creates an encrypted, versioned, lifecycle-managed S3 bucket.
+  - Enforces TLS-only access.
+  - Supports custom KMS key or GBTS keychain integration.
+  - Exports outputs for downstream stacks (e.g. Glue, Athena, EMR).
+
+Metadata:
+  Repository: https://pramerica-.com/projects/repos/deployer-patterns/browse
 
 Parameters:
   EnvironmentName:
     Type: String
-    Description: The environment name (dev, stg, prod)
+    Description: Environment name (e.g. dev, stg, prod)
+
+  BucketName:
+    Type: String
+    Description: Optional — specify bucket name, or leave blank for auto-generation.
+    Default: ""
+
+  S3ObjectVersioning:
+    Type: String
+    Description: Enable or suspend versioning.
+    AllowedValues: [Enabled, Suspended]
+    Default: Enabled
+
+  LifecyclePolicy:
+    Type: String
+    Description: Apply lifecycle rules for intelligent tiering and archival.
+    AllowedValues: [Enabled, Disabled]
+    Default: Enabled
+
+  VersionedObjectExpiration:
+    Type: Number
+    Description: Number of days before old versioned objects expire.
+    Default: 65
+
+  CustomKmsKey:
+    Type: String
+    Description: ARN for a custom KMS CMK for encryption.
+    Default: ""
+
+  GBTSKeychain:
+    Type: String
+    Description: Use GBTS keychain for encryption.
+    AllowedValues: [Enabled, Disabled]
+    Default: Disabled
+
+Conditions:
+  NameBucket: !Not [!Equals [!Ref BucketName, ""]]
+  ProvideCK: !Not [!Equals [!Ref CustomKmsKey, ""]]
+  UseGBTSKeychain: !Equals [!Ref GBTSKeychain, "Enabled"]
+  VersionedLifecycle: !And
+    - !Equals [!Ref S3ObjectVersioning, "Enabled"]
+    - !Equals [!Ref LifecyclePolicy, "Enabled"]
+  NonVersionedLifecycle: !And
+    - !Equals [!Ref S3ObjectVersioning, "Suspended"]
+    - !Equals [!Ref LifecyclePolicy, "Enabled"]
 
 Resources:
   # -------------------------------
-  # S3 Bucket (Data Lake)
+  # Main S3 Data Lake Bucket
   # -------------------------------
   DataLakeBucket:
     Type: AWS::S3::Bucket
     Properties:
-      Tags:
-        - Key: Environment
-          Value: !Ref EnvironmentName
+      BucketName: !If [NameBucket, !Ref BucketName, !Sub "datalake-${EnvironmentName}-${AWS::AccountId}"]
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: !Ref S3ObjectVersioning
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !If
+                - ProvideCK
+                - !Ref CustomKmsKey
+                - !If
+                  - UseGBTSKeychain
+                  - !ImportValue gbtskeychain
+                  - !Ref "AWS::NoValue"
+      LifecycleConfiguration:
+        Rules: !If
+          - VersionedLifecycle
+          - 
+            - Id: VersionedObjectRule
+              Status: Enabled
+              ExpirationInDays: !Ref VersionedObjectExpiration
+              NoncurrentVersionTransitions:
+                - NoncurrentDays: 30
+                  StorageClass: STANDARD_IA
+                - NoncurrentDays: 60
+                  StorageClass: GLACIER_IR
+              AbortIncompleteMultipartUpload:
+                DaysAfterInitiation: 7
+          - !If
+            - NonVersionedLifecycle
+            - 
+              - Id: StandardObjectRule
+                Status: Enabled
+                Transitions:
+                  - TransitionInDays: 15
+                    StorageClass: INTELLIGENT_TIERING
+                AbortIncompleteMultipartUpload:
+                  DaysAfterInitiation: 7
+            - !Ref "AWS::NoValue"
 
   # -------------------------------
-  # IAM Role for Glue
+  # Enforce HTTPS / TLS-only Access
   # -------------------------------
-  GlueServiceRole:
-    Type: AWS::IAM::Role
+  DataLakeBucketPolicy:
+    Type: AWS::S3::BucketPolicy
     Properties:
-      RoleName: !Sub "glue-service-role-${EnvironmentName}"
-      AssumeRolePolicyDocument:
+      Bucket: !Ref DataLakeBucket
+      PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Effect: Allow
-            Principal:
-              Service: glue.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
-      Policies:
-        - PolicyName: S3AccessPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:PutObject
-                  - s3:ListBucket
-                Resource:
-                  - !Sub "arn:aws:s3:::${DataLakeBucket}"
-                  - !Sub "arn:aws:s3:::${DataLakeBucket}/*"
-
-  # -------------------------------
-  # Glue Database
-  # -------------------------------
-  GlueDatabase:
-    Type: AWS::Glue::Database
-    Properties:
-      CatalogId: !Ref "AWS::AccountId"
-      DatabaseInput:
-        Name: !Sub "datalake_${EnvironmentName}"
-        Description: Glue database for ${EnvironmentName} environment
-
-  # -------------------------------
-  # Glue Crawler (Auto-detect schema)
-  # -------------------------------
-  GlueCrawler:
-    Type: AWS::Glue::Crawler
-    Properties:
-      Name: !Sub "crawler-${EnvironmentName}"
-      Role: !GetAtt GlueServiceRole.Arn
-      DatabaseName: !Ref GlueDatabase
-      Targets:
-        S3Targets:
-          - Path: !Sub "s3://${DataLakeBucket}/"
-      SchemaChangePolicy:
-        UpdateBehavior: UPDATE_IN_DATABASE
-        DeleteBehavior: LOG
-
-  # -------------------------------
-  # Athena Workgroup
-  # -------------------------------
-  AthenaWorkGroup:
-    Type: AWS::Athena::WorkGroup
-    Properties:
-      Name: !Sub "athena_${EnvironmentName}"
-      WorkGroupConfiguration:
-        ResultConfiguration:
-          OutputLocation: !Sub "s3://${DataLakeBucket}/athena-results/"
-        EnforceWorkGroupConfiguration: true
+          - Sid: EnforceTLS
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt DataLakeBucket.Arn
+              - !Sub "${DataLakeBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: false
 
 Outputs:
-  BucketName:
-    Description: The S3 bucket name
+  # -------------------------------
+  # Exported Outputs (for other stacks)
+  # -------------------------------
+  S3BucketName:
+    Description: Name of the created S3 bucket
     Value: !Ref DataLakeBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-S3BucketName"
 
-  GlueDatabaseName:
-    Description: Glue database
-    Value: !Ref GlueDatabase
+  S3BucketArn:
+    Description: ARN of the created S3 bucket
+    Value: !GetAtt DataLakeBucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-S3BucketArn"
 
-  GlueCrawlerName:
-    Description: Glue crawler
-    Value: !Ref GlueCrawler
-
-  AthenaWorkGroupName:
-    Description: Athena workgroup
-    Value: !Ref AthenaWorkGroup
+  StackName:
+    Description: CloudFormation stack name
+    Value: !Ref AWS::StackName
