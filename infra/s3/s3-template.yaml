@@ -16,7 +16,7 @@ Parameters:
 
   BucketName:
     Type: String
-    Description: Optional — specify bucket name, or leave blank for auto-generation.
+    Description: Optional ? specify bucket name, or leave blank for auto-generation.
     Default: ""
 
   S3ObjectVersioning:
@@ -90,20 +90,27 @@ Resources:
       LifecycleConfiguration:
         Rules: !If
           - VersionedLifecycle
-          - 
+          -
             - Id: VersionedObjectRule
               Status: Enabled
               ExpirationInDays: !Ref VersionedObjectExpiration
+              NoncurrentVersionTransitions:
+                - TransitionInDays: 30
+                  StorageClass: STANDARD_IA
+                - TransitionInDays: 60
+                  StorageClass: GLACIER
               AbortIncompleteMultipartUpload:
                 DaysAfterInitiation: 7
           - !If
             - NonVersionedLifecycle
-            - 
+            -
               - Id: StandardObjectRule
                 Status: Enabled
                 Transitions:
-                  - TransitionInDays: 15
-                    StorageClass: INTELLIGENT_TIERING
+                  - TransitionInDays: 30
+                    StorageClass: STANDARD_IA
+                  - TransitionInDays: 60
+                    StorageClass: GLACIER
                 AbortIncompleteMultipartUpload:
                   DaysAfterInitiation: 7
             - !Ref "AWS::NoValue"
@@ -120,7 +127,8 @@ Resources:
         Statement:
           - Sid: EnforceTLS
             Effect: Deny
-            Principal: "*"
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
             Action: s3:*
             Resource:
               - !GetAtt DataLakeBucket.Arn
