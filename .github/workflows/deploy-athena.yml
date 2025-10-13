@@ -8,18 +8,14 @@ on:
         required: true
         default: "dev"
         type: choice
-        options:
-          - dev
-          - stg
-          - prod
+        options: [dev, stg, prod]
       action:
         description: "Deploy or destroy"
         required: true
         default: "deploy"
         type: choice
-        options:
-          - deploy
-          - destroy
+        options: [deploy, destroy]
+
   workflow_call:
     inputs:
       environment:
@@ -36,26 +32,46 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set env vars
+      - name: Set environment variables
         run: |
           echo "ENV=${{ inputs.environment }}" >> $GITHUB_ENV
           echo "STACK_NAME=athena-${{ inputs.environment }}" >> $GITHUB_ENV
           echo "TEMPLATE_PATH=infra/athena/Athena.yaml" >> $GITHUB_ENV
           echo "PARAM_FILE=parameters/athena-${{ inputs.environment }}.json" >> $GITHUB_ENV
 
-      - name: Verify IAM Role
+      - name: Verify AWS identity
         run: aws sts get-caller-identity
 
-      - name: Deploy or Destroy
+      - name: Create or Update / Destroy Stack
         run: |
           if [ "${{ inputs.action }}" == "deploy" ]; then
-            aws cloudformation deploy \
-              --stack-name "$STACK_NAME" \
-              --template-file "$TEMPLATE_PATH" \
-              --capabilities CAPABILITY_NAMED_IAM \
-              --parameter-overrides file://"$PARAM_FILE" \
-              --no-fail-on-empty-changeset
+            if ! aws cloudformation describe-stacks --stack-name "$STACK_NAME" >/dev/null 2>&1; then
+              echo "🆕 Creating new stack $STACK_NAME"
+              aws cloudformation create-stack \
+                --stack-name "$STACK_NAME" \
+                --template-body file://"$TEMPLATE_PATH" \
+                --parameters file://"$PARAM_FILE" \
+                --capabilities CAPABILITY_NAMED_IAM
+              aws cloudformation wait stack-create-complete --stack-name "$STACK_NAME"
+              echo "✅ Stack $STACK_NAME created successfully."
+            else
+              echo "🔄 Updating existing stack $STACK_NAME"
+              set +e
+              aws cloudformation update-stack \
+                --stack-name "$STACK_NAME" \
+                --template-body file://"$TEMPLATE_PATH" \
+                --parameters file://"$PARAM_FILE" \
+                --capabilities CAPABILITY_NAMED_IAM
+              STATUS=$?
+              set -e
+              if [ $STATUS -ne 0 ]; then
+                echo "⚠️ No updates needed for $STACK_NAME"
+              else
+                aws cloudformation wait stack-update-complete --stack-name "$STACK_NAME"
+                echo "✅ Stack $STACK_NAME updated successfully."
+              fi
+            fi
           else
+            echo "🧨 Deleting stack $STACK_NAME"
             aws cloudformation delete-stack --stack-name "$STACK_NAME"
             aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
-          fi
