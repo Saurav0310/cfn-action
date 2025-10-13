@@ -1,0 +1,43 @@
+name: Deploy All Stacks (S3 → Glue → Athena)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - stg
+          - prod
+      action:
+        description: "Deploy or destroy"
+        required: true
+        default: "deploy"
+        type: choice
+        options:
+          - deploy
+          - destroy
+
+jobs:
+  s3:
+    uses: ./.github/workflows/deploy-s3.yml
+    with:
+      environment: ${{ github.event.inputs.environment }}
+      action: ${{ github.event.inputs.action }}
+
+  glue:
+    needs: s3
+    uses: ./.github/workflows/deploy-glue.yml
+    with:
+      environment: ${{ github.event.inputs.environment }}
+      action: ${{ github.event.inputs.action }}
+
+  athena:
+    needs: glue
+    uses: ./.github/workflows/deploy-athena.yml
+    with:
+      environment: ${{ github.event.inputs.environment }}
+      action: ${{ github.event.inputs.action }}
