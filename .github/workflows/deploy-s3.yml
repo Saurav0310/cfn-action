@@ -1,0 +1,61 @@
+name: Deploy S3 Stack
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - stg
+          - prod
+      action:
+        description: "Deploy or destroy"
+        required: true
+        default: "deploy"
+        type: choice
+        options:
+          - deploy
+          - destroy
+
+jobs:
+  s3:
+    runs-on: aws
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Clean up AWS credentials
+        run: |
+          rm -rf ~/.aws || true
+          unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE || true
+
+      - name: Set environment variables
+        run: |
+          echo "ENV=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          echo "STACK_NAME=s3-${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          echo "TEMPLATE_PATH=infra/s3/s3-template.yaml" >> $GITHUB_ENV
+          echo "PARAM_FILE=parameters/s3-${{ github.event.inputs.environment }}.json" >> $GITHUB_ENV
+
+      - name: Verify AWS Identity
+        run: aws sts get-caller-identity
+
+      - name: Deploy or Destroy S3 Stack
+        run: |
+          if [ "${{ github.event.inputs.action }}" == "deploy" ]; then
+            echo "🚀 Deploying $STACK_NAME"
+            aws cloudformation deploy \
+              --stack-name "$STACK_NAME" \
+              --template-file "$TEMPLATE_PATH" \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --parameter-overrides file://"$PARAM_FILE" \
+              --no-fail-on-empty-changeset
+          else
+            echo "🧨 Deleting $STACK_NAME"
+            aws cloudformation delete-stack --stack-name "$STACK_NAME"
+            aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
+          fi
