@@ -1,12 +1,17 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   End-to-End Data Lake Stack:
-  - Glue Database and Crawler (auto-detect schema)
+  - Imports existing secure S3 bucket from another stack
+  - Creates Glue Database and Crawler (auto-detect schema)
 
 Parameters:
   EnvironmentName:
     Type: String
     Description: The environment name (dev, stg, prod)
+
+  S3StackName:
+    Type: String
+    Description: The name of the S3 stack to import bucket info from.
 
 Resources:
   # -------------------------------
@@ -36,8 +41,12 @@ Resources:
                   - s3:PutObject
                   - s3:ListBucket
                 Resource:
-                  - !Sub "arn:aws:s3:::${DataLakeBucket}"
-                  - !Sub "arn:aws:s3:::${DataLakeBucket}/*"
+                  - !ImportValue
+                    Fn::Sub: "${S3StackName}-S3BucketArn"
+                  - !Sub
+                    - "${BucketArn}/*"
+                    - BucketArn: !ImportValue
+                        Fn::Sub: "${S3StackName}-S3BucketArn"
 
   # -------------------------------
   # Glue Database
@@ -48,7 +57,7 @@ Resources:
       CatalogId: !Ref "AWS::AccountId"
       DatabaseInput:
         Name: !Sub "datalake_${EnvironmentName}"
-        Description: Glue database for ${EnvironmentName} environment
+        Description: !Sub "Glue database for ${EnvironmentName} environment"
 
   # -------------------------------
   # Glue Crawler (Auto-detect schema)
@@ -61,16 +70,19 @@ Resources:
       DatabaseName: !Ref GlueDatabase
       Targets:
         S3Targets:
-          - Path: !Sub "s3://${DataLakeBucket}/"
+          - Path: !Sub
+              - "s3://${BucketName}/"
+              - BucketName: !ImportValue
+                  Fn::Sub: "${S3StackName}-S3BucketName"
       SchemaChangePolicy:
         UpdateBehavior: UPDATE_IN_DATABASE
         DeleteBehavior: LOG
 
 Outputs:
   GlueDatabaseName:
-    Description: Glue database
+    Description: Glue database name
     Value: !Ref GlueDatabase
 
   GlueCrawlerName:
-    Description: Glue crawler
+    Description: Glue crawler name
     Value: !Ref GlueCrawler
