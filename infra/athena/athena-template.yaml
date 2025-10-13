@@ -1,0 +1,27 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  End-to-End Data Lake Stack:
+  - Athena Workgroup for querying
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Description: The environment name (dev, stg, prod)
+
+Resources:
+  # -------------------------------
+  # Athena Workgroup
+  # -------------------------------
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub "athena_${EnvironmentName}"
+      WorkGroupConfiguration:
+        ResultConfiguration:
+          OutputLocation: !Sub "s3://${DataLakeBucket}/athena-results/"
+        EnforceWorkGroupConfiguration: true
+
+Outputs:
+  AthenaWorkGroupName:
+    Description: Athena workgroup
+    Value: !Ref AthenaWorkGroup
