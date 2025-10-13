@@ -8,18 +8,13 @@ on:
         required: true
         default: "dev"
         type: choice
-        options:
-          - dev
-          - stg
-          - prod
+        options: [dev, stg, prod]
       action:
         description: "Deploy or destroy"
         required: true
         default: "deploy"
         type: choice
-        options:
-          - deploy
-          - destroy
+        options: [deploy, destroy]
 
 jobs:
   s3:
