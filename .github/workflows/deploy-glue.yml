@@ -20,29 +20,35 @@ on:
         options:
           - deploy
           - destroy
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      action:
+        required: true
+        type: string
 
 jobs:
   glue:
     runs-on: aws
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set environment variables
+      - name: Set env vars
         run: |
-          echo "ENV=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
-          echo "STACK_NAME=glue-${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+          echo "ENV=${{ inputs.environment }}" >> $GITHUB_ENV
+          echo "STACK_NAME=glue-${{ inputs.environment }}" >> $GITHUB_ENV
           echo "TEMPLATE_PATH=infra/glue/glue-template.yaml" >> $GITHUB_ENV
-          echo "PARAM_FILE=parameters/glue-${{ github.event.inputs.environment }}.json" >> $GITHUB_ENV
+          echo "PARAM_FILE=parameters/glue-${{ inputs.environment }}.json" >> $GITHUB_ENV
 
-      - name: Verify AWS Identity
+      - name: Verify IAM Role
         run: aws sts get-caller-identity
 
-      - name: Deploy or Destroy Glue Stack
+      - name: Deploy or Destroy
         run: |
-          if [ "${{ github.event.inputs.action }}" == "deploy" ]; then
-            echo "🚀 Deploying $STACK_NAME"
+          if [ "${{ inputs.action }}" == "deploy" ]; then
             aws cloudformation deploy \
               --stack-name "$STACK_NAME" \
               --template-file "$TEMPLATE_PATH" \
@@ -50,7 +56,6 @@ jobs:
               --parameter-overrides file://"$PARAM_FILE" \
               --no-fail-on-empty-changeset
           else
-            echo "🧨 Deleting $STACK_NAME"
             aws cloudformation delete-stack --stack-name "$STACK_NAME"
             aws cloudformation wait stack-delete-complete --stack-name "$STACK_NAME"
           fi
