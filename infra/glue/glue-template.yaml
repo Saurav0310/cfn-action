@@ -9,10 +9,6 @@ Parameters:
     Type: String
     Description: The environment name (dev, stg, prod)
 
-  S3StackName:
-    Type: String
-    Description: The name of the S3 stack to import bucket info from.
-
 Resources:
   # -------------------------------
   # IAM Role for Glue
