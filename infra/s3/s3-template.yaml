@@ -1,50 +1,55 @@
-AWSTemplateFormatVersion: '2010-09-09'
+---
+AWSTemplateFormatVersion: 2010-09-09
 Description: >
-  End-to-End Secure Data Lake S3 Bucket Stack
-  - Creates an encrypted, versioned, lifecycle-managed S3 bucket.
-  - Enforces TLS-only access.
-  - Supports custom KMS key or GBTS keychain integration.
-  - Exports outputs for downstream stacks (e.g. Glue, Athena, EMR).
-
+  CloudFormation template to create a secure,
+  compliant S3 data lake bucket with optional versioning,
+  lifecycle policies, and encryption settings.
 Metadata:
-  Repository: https://pramerica-.com/projects/repos/deployer-patterns/browse
+  Repository: >-
+    https://-.com/projects/repos/deployer-patterns/browse
 
 Parameters:
-  EnvironmentName:
-    Type: String
-    Description: Environment name (e.g. dev, stg, prod)
-
   BucketName:
     Type: String
-    Description: Optional ? specify bucket name, or leave blank for auto-generation.
+    Description: >
+      Optional? Specify bucket name, or leave blank for auto-generation.
     Default: ""
 
   S3ObjectVersioning:
     Type: String
     Description: Enable or suspend versioning.
-    AllowedValues: [Enabled, Suspended]
+    AllowedValues:
+      - Enabled
+      - Suspended
     Default: Enabled
 
   LifecyclePolicy:
     Type: String
-    Description: Apply lifecycle rules for intelligent tiering and archival.
-    AllowedValues: [Enabled, Disabled]
+    Description: >
+      Apply lifecycle rules for intelligent tiering and archival.
+    AllowedValues:
+      - Enabled
+      - Disabled
     Default: Enabled
 
   VersionedObjectExpiration:
     Type: Number
-    Description: Number of days before old versioned objects expire.
+    Description: >
+      Number of days before old versioned objects expire.
     Default: 65
 
   CustomKmsKey:
     Type: String
-    Description: ARN for a custom KMS CMK for encryption.
+    Description: >
+      ARN for a custom KMS CMK for encryption.
     Default: ""
 
   GBTSKeychain:
     Type: String
     Description: Use GBTS keychain for encryption.
-    AllowedValues: [Enabled, Disabled]
+    AllowedValues:
+      - Enabled
+      - Disabled
     Default: Disabled
 
 Conditions:
@@ -62,10 +67,13 @@ Resources:
   # -------------------------------
   # Main S3 Data Lake Bucket
   # -------------------------------
-  DataLakeBucket:
+  S3Bucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !If [NameBucket, !Ref BucketName, !Sub "datalake-${EnvironmentName}-${AWS::AccountId}"]
+      BucketName: !If
+        - NameBucket
+        - !Ref BucketName
+        - !Ref "AWS::NoValue"
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
@@ -118,10 +126,10 @@ Resources:
   # -------------------------------
   # Enforce HTTPS / TLS-only Access
   # -------------------------------
-  DataLakeBucketPolicy:
+  S3BucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
-      Bucket: !Ref DataLakeBucket
+      Bucket: !Ref S3Bucket
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -131,8 +139,8 @@ Resources:
               AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
             Action: s3:*
             Resource:
-              - !GetAtt DataLakeBucket.Arn
-              - !Sub "${DataLakeBucket.Arn}/*"
+              - !GetAtt S3Bucket.Arn
+              - !Sub "${S3Bucket.Arn}/*"
             Condition:
               Bool:
                 aws:SecureTransport: false
@@ -143,13 +151,13 @@ Outputs:
   # -------------------------------
   S3BucketName:
     Description: Name of the created S3 bucket
-    Value: !Ref DataLakeBucket
+    Value: !Ref S3Bucket
     Export:
       Name: !Sub "${AWS::StackName}-S3BucketName"
 
   S3BucketArn:
     Description: ARN of the created S3 bucket
-    Value: !GetAtt DataLakeBucket.Arn
+    Value: !GetAtt S3Bucket.Arn
     Export:
       Name: !Sub "${AWS::StackName}-S3BucketArn"
 
