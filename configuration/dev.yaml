@@ -1,0 +1,67 @@
+---
+# Global Project Configuration
+Project: "usb-gift-archive-infra"
+CE_TIER: "dev"
+EnvironmentName: "dev"
+
+# S3 Configuration
+S3:
+  BucketName: "gift-archive-bucket-dev"
+  LifecyclePolicy: Enabled
+  Versioning: Enabled
+  VersionedObjectExpiration: 65
+  Encryption:
+    Type: "SSE-S3"  # or "SSE-KMS"
+    KMSKeyId: ""  # only if using SSE-KMS
+
+# DMS Configuration
+DMS:
+  InstanceClass: "dms.t3.medium"
+  DB2SecretName: "db2/credentials/dev"
+  DB2ServerName: "db2-dev.example.com"
+  DB2Port: 50000
+  DB2DatabaseName: "PRODDB"
+  # Optional: Specific schema/table mapping
+  TableMappings:
+    IncludeSchemas:
+      - "SCHEMA1"
+      - "SCHEMA2"
+    ExcludeTables:
+      - "SCHEMA1.TEMP_*"
+      - "SCHEMA2.LOG_*"
+  # S3 Target Settings
+  S3Settings:
+    BucketFolder: "raw_data"
+    DataFormat: "parquet"
+    Compression: "snappy"
+    DatePartitioning: true
+
+# Glue Configuration
+Glue:
+  DatabaseName: "gift_archive_db"
+  CrawlerSchedule: "cron(0 1 * * ? *)"  # Daily at 1 AM
+  # Optional: Specific table configurations
+  Classification: "db2"
+  ConnectionOptions: {}  # Add DB connection if needed
+
+# Network Configuration
+Network:
+  VPCExportName: "VpcV3-Native-VPC"
+  SubnetExports:
+    - "VpcV3-Native-1"
+    - "VpcV3-Native-2"
+    - "VpcV3-Native-3"
+  SecurityGroups: []  # Add specific security groups if needed
+
+# Monitoring & Logging
+Monitoring:
+  CloudWatchLogs: true
+  S3AccessLogs: true
+  Metrics: true
+
+# Tags
+Tags:
+  Project: "usb-gift-archive"
+  Environment: "dev"
+  Owner: "data-engineering-team"
+  DataClassification: "confidential"
