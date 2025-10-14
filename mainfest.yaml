@@ -1,0 +1,54 @@
+---
+Global:
+  Environment:
+    Fn::FromFile: !Sub
+      - configuration/${tier}.yaml
+      - tier: !Query Environment.CE_TIER
+  Options:
+    save-output: output.json
+    tags: tags.json
+    skip-no-update: true
+
+Jobs:
+  - Name: S3Bucket
+    Type: deploy-template
+    Options:
+      stack-name: !Sub
+        - ${Project}-s3-${TIER}
+        - Project: !Query Environment.Project
+          TIER: !Query Environment.CE_TIER
+      filename: templates/s3.yaml
+      Parameters:
+        BucketName: !Query Environment.BucketName
+        LifecyclePolicy: !Query Environment.LifecyclePolicy
+        EnvironmentName: !Query Environment.CE_TIER
+
+  - Name: GlueStack
+    Type: deploy-template
+    Options:
+      stack-name: !Sub
+        - ${Project}-glue-${TIER}
+        - Project: !Query Environment.Project
+          TIER: !Query Environment.CE_TIER
+      filename: templates/glue.yaml
+      Parameters:
+        EnvironmentName: !Query Environment.CE_TIER
+    DependsOn: S3Bucket
+
+  - Name: DMSStack
+    Type: deploy-template
+    Options:
+      stack-name: !Sub
+        - ${Project}-dms-${TIER}
+        - Project: !Query Environment.Project
+          TIER: !Query Environment.CE_TIER
+      filename: templates/dms.yaml
+      Parameters:
+        EnvironmentName: !Query Environment.CE_TIER
+        S3BucketName: !Query Environment.BucketName
+        DMSInstanceClass: !Query Environment.DMSInstanceClass
+        DB2SecretName: !Query Environment.DB2SecretName
+        DB2ServerName: !Query Environment.DB2ServerName
+        DB2Port: !Query Environment.DB2Port
+        DB2DatabaseName: !Query Environment.DB2DatabaseName
+    DependsOn: S3Bucket
