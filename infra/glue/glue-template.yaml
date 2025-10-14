@@ -1,3 +1,4 @@
+---
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   End-to-End Data Lake Glue Stack
@@ -40,11 +41,13 @@ Resources:
                   - !Sub
                     - '${S3BucketArn}'
                     - S3BucketArn:
-                        Fn::ImportValue: !Sub 's3-${EnvironmentName}-S3BucketArn'
+                        Fn::ImportValue: !Sub
+                          's3-${EnvironmentName}-S3BucketArn'
                   - !Sub
                     - '${S3BucketArn}/*'
                     - S3BucketArn:
-                        Fn::ImportValue: !Sub 's3-${EnvironmentName}-S3BucketArn'
+                        Fn::ImportValue: !Sub
+                          's3-${EnvironmentName}-S3BucketArn'
 
   # -------------------------------
   # Glue Database
@@ -71,7 +74,8 @@ Resources:
           - Path: !Sub
               - 's3://${S3BucketName}/'
               - S3BucketName:
-                  Fn::ImportValue: !Sub 's3-${EnvironmentName}-S3BucketName'
+                  Fn::ImportValue: !Sub
+                    's3-${EnvironmentName}-S3BucketName'
       SchemaChangePolicy:
         UpdateBehavior: UPDATE_IN_DATABASE
         DeleteBehavior: LOG
