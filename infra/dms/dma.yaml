@@ -1,0 +1,258 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  DMS Stack for DB2 to S3 Data Migration
+  - Creates DMS Replication Instance
+  - Source Endpoint (DB2) and Target Endpoint (S3)
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Description: Environment name (e.g. dev, stg, prod)
+
+  DMSInstanceClass:
+    Type: String
+    Description: DMS replication instance class
+    Default: dms.t3.medium
+    AllowedValues:
+      - dms.t3.micro
+      - dms.t3.small
+      - dms.t3.medium
+      - dms.t3.large
+      - dms.c5.large
+      - dms.c5.xlarge
+
+  S3BucketName:
+    Type: String
+    Description: S3 bucket name for destination
+
+  DB2SecretName:
+    Type: String
+    Description: Name of Secrets Manager secret with DB2 credentials
+
+  DB2ServerName:
+    Type: String
+    Description: DB2 server hostname or IP
+
+  DB2Port:
+    Type: Number
+    Description: DB2 port number
+    Default: 50000
+
+  DB2DatabaseName:
+    Type: String
+    Description: DB2 database name
+
+Resources:
+  # -------------------------------
+  # IAM Role for DMS
+  # -------------------------------
+  DMSServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "dms-service-role-${EnvironmentName}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: dms.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonDMSCloudWatchLogsRole
+      Policies:
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:PutObjectTagging
+                Resource:
+                  - !Sub "arn:aws:s3:::${S3BucketName}/*"
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub
+                  - "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}-*"
+                  - SecretName: !Ref DB2SecretName
+
+  # -------------------------------
+  # DMS Replication Instance
+  # -------------------------------
+  DMSReplicationInstance:
+    Type: AWS::DMS::ReplicationInstance
+    Properties:
+      ReplicationInstanceIdentifier: !Sub "dms-instance-${EnvironmentName}"
+      AllocatedStorage: 50
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: true
+      EngineVersion: '3.4.7'
+      KmsKeyId: alias/aws/dms
+      MultiAZ: false
+      PreferredMaintenanceWindow: sun:03:00-sun:04:00
+      PubliclyAccessible: false
+      ReplicationInstanceClass: !Ref DMSInstanceClass
+      ReplicationSubnetGroupIdentifier: !Ref DMSReplicationSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref DMSSecurityGroup
+
+  # -------------------------------
+  # DMS Replication Subnet Group
+  # -------------------------------
+  DMSReplicationSubnetGroup:
+    Type: AWS::DMS::ReplicationSubnetGroup
+    Properties:
+      ReplicationSubnetGroupDescription: !Sub
+        "DMS subnet group for ${EnvironmentName}"
+      ReplicationSubnetGroupIdentifier: !Sub
+        "dms-subnet-group-${EnvironmentName}"
+      SubnetIds:
+        - Fn::ImportValue: VpcV3-Native-1
+        - Fn::ImportValue: VpcV3-Native-2
+        - Fn::ImportValue: VpcV3-Native-3
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # -------------------------------
+  # Security Group for DMS
+  # -------------------------------
+  DMSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub
+        "Security group for DMS instance in ${EnvironmentName}"
+      GroupName: !Sub "dms-sg-${EnvironmentName}"
+      VpcId:
+        Fn::ImportValue: VpcV3-Native-VPC
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: !Ref DB2Port
+          ToPort: !Ref DB2Port
+          CidrIp: 10.0.0.0/8
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # -------------------------------
+  # DMS Source Endpoint (DB2)
+  # -------------------------------
+  DMSSourceEndpoint:
+    Type: AWS::DMS::Endpoint
+    Properties:
+      EndpointIdentifier: !Sub "db2-source-${EnvironmentName}"
+      EndpointType: source
+      EngineName: db2
+      DatabaseName: !Ref DB2DatabaseName
+      ServerName: !Ref DB2ServerName
+      Port: !Ref DB2Port
+      SecretsManagerSecretId: !Ref DB2SecretName
+      ExtraConnectionAttributes: >
+        keepExternalFile=false;
+        maxFileSize=512;
+
+  # -------------------------------
+  # DMS Target Endpoint (S3)
+  # -------------------------------
+  DMSTargetEndpoint:
+    Type: AWS::DMS::Endpoint
+    Properties:
+      EndpointIdentifier: !Sub "s3-target-${EnvironmentName}"
+      EndpointType: target
+      EngineName: s3
+      S3Settings:
+        BucketName: !Ref S3BucketName
+        BucketFolder: "raw_data"
+        ServiceAccessRoleArn: !GetAtt DMSServiceRole.Arn
+        DataFormat: parquet
+        IncludeOpForFullLoad: true
+        CdcInsertsOnly: false
+        AddColumnName: true
+        CompressionType: snappy
+        DatePartitionEnabled: true
+        DatePartitionSequence: YYYYMMDD
+        UseCsvNoSupValue: false
+
+  # -------------------------------
+  # DMS Replication Task
+  # -------------------------------
+  DMSReplicationTask:
+    Type: AWS::DMS::ReplicationTask
+    Properties:
+      ReplicationTaskIdentifier: !Sub "db2-to-s3-task-${EnvironmentName}"
+      ReplicationInstanceArn: !GetAtt
+        DMSReplicationInstance.ReplicationInstanceArn
+      SourceEndpointArn: !GetAtt DMSSourceEndpoint.EndpointArn
+      TargetEndpointArn: !GetAtt DMSTargetEndpoint.EndpointArn
+      MigrationType: full-load-and-cdc
+      TableMappings: |
+        {
+          "rules": [
+            {
+              "rule-type": "selection",
+              "rule-id": "1",
+              "rule-name": "1",
+              "object-locator": {
+                "schema-name": "%",
+                "table-name": "%"
+              },
+              "rule-action": "include"
+            }
+          ]
+        }
+      ReplicationTaskSettings: |
+        {
+          "TargetMetadata": {
+            "TargetSchema": "",
+            "SupportLobs": true,
+            "FullLobMode": false,
+            "LobChunkSize": 64,
+            "LimitedSizeLobMode": true,
+            "LobMaxSize": 32,
+            "InlineLobMaxSize": 0
+          },
+          "FullLoadSettings": {
+            "TargetTablePrepMode": "DROP_AND_CREATE",
+            "CreatePkAfterFullLoad": false,
+            "StopTaskCachedChangesApplied": false,
+            "StopTaskCachedChangesNotApplied": false,
+            "MaxFullLoadSubTasks": 8,
+            "TransactionConsistencyTimeout": 600,
+            "CommitRate": 10000
+          },
+          "Logging": {
+            "EnableLogging": true
+          }
+        }
+    DependsOn:
+      - DMSReplicationInstance
+      - DMSSourceEndpoint
+      - DMSTargetEndpoint
+
+Outputs:
+  DMSReplicationInstanceId:
+    Description: DMS Replication Instance Identifier
+    Value: !Ref DMSReplicationInstance
+
+  DMSSourceEndpointArn:
+    Description: DB2 Source Endpoint ARN
+    Value: !GetAtt DMSSourceEndpoint.EndpointArn
+
+  DMSTargetEndpointArn:
+    Description: S3 Target Endpoint ARN
+    Value: !GetAtt DMSTargetEndpoint.EndpointArn
+
+  DMSReplicationTaskArn:
+    Description: DMS Replication Task ARN
+    Value: !GetAtt DMSReplicationTask.ReplicationTaskArn
