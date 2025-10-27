@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Application Load Balancer with SSL/TLS Configuration'
+
+Parameters:
+  Alias:
+    Type: String
+    Description: Enter an alias for the ALB (Optional)
+    Default: ""
+  
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID where the ALB will be deployed
+  
+  SubnetType:
+    Type: String
+    Description: Specify in what subnets the ALB will be used
+    AllowedValues: ["Public", "Private"]
+    Default: "Public"
+  
+  SSLCertificateArn:
+    Type: String
+    Description: ARN of a pre-loaded SSL certificate on this account
+    Default: ""
+  
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security Group for the ALB
+
+Resources:
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${AWS::StackName}-alb"
+      Scheme: !If [IsPublic, "internet-facing", "internal"]
+      SecurityGroups:
+        - !Ref SecurityGroupId
+      Subnets: 
+        - !If [IsPublic, !Ref PublicSubnet1, !Ref PrivateSubnet1]
+        - !If [IsPublic, !Ref PublicSubnet2, !Ref PrivateSubnet2]
+      Type: application
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-alb"
+
+  # HTTPS Listener with SSL Certificate
+  ALBListenerHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasSSL
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref SSLCertificateArn
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06  # Modern TLS policy
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: "200"
+            ContentType: "text/plain"
+            MessageBody: "ALB HTTPS is working"
+
+  # HTTP Listener that redirects to HTTPS (if SSL is configured)
+  ALBListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: "HTTPS"
+            Port: "443"
+            StatusCode: "HTTP_301"
+          Condition: HasSSL
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: "200"
+            ContentType: "text/plain"
+            MessageBody: "ALB HTTP is working"
+
+Conditions:
+  IsPublic: !Equals [!Ref SubnetType, "Public"]
+  HasSSL: !Not [!Equals [!Ref SSLCertificateArn, ""]]
+
+Outputs:
+  LoadBalancerDNS:
+    Description: ALB DNS Name
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+  
+  LoadBalancerURL:
+    Description: ALB URL
+    Value: !Sub "https://${ApplicationLoadBalancer.DNSName}"
+  
+  HTTPSListener:
+    Description: HTTPS Listener ARN
+    Value: !Ref ALBListenerHTTPS
+    Condition: HasSSL
