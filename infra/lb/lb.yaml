@@ -1,5 +1,6 @@
+---
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Application Load Balancer with SSL/TLS Configuration'
+Description: 'Application Load Balancer with Native Subnets and Security Group'
 
 Parameters:
   Alias:
@@ -7,52 +8,84 @@ Parameters:
     Description: Enter an alias for the ALB (Optional)
     Default: ""
   
-  VpcId:
-    Type: AWS::EC2::VPC::Id
-    Description: VPC ID where the ALB will be deployed
-  
   SubnetType:
     Type: String
     Description: Specify in what subnets the ALB will be used
-    AllowedValues: ["Public", "Private"]
-    Default: "Public"
+    AllowedValues: ["Public", "Native", "Route3"]
+    Default: "Native"
   
   SSLCertificateArn:
     Type: String
     Description: ARN of a pre-loaded SSL certificate on this account
     Default: ""
-  
-  SecurityGroupId:
-    Type: AWS::EC2::SecurityGroup::Id
-    Description: Security Group for the ALB
 
 Resources:
-  ApplicationLoadBalancer:
+  # Security Group for ALB with specific CIDR rules
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Application Load Balancer
+      VpcId:
+        Fn::ImportValue: VpcV3-VpcId  # Assuming VPC ID is exported
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 48.0.0.0/8
+          Description: "Allow HTTP from 48.0.0.0/8"
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 48.0.0.0/8
+          Description: "Allow HTTPS from 48.0.0.0/8"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-alb-sg"
+
+  # Application Load Balancer
+  LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
       Name: !Sub "${AWS::StackName}-alb"
-      Scheme: !If [IsPublic, "internet-facing", "internal"]
+      Subnets:
+        !If [IsPublic,
+          [
+            Fn::ImportValue: VpcV3-Public-1,
+            Fn::ImportValue: VpcV3-Public-2,
+            Fn::ImportValue: VpcV3-Public-3
+          ],
+          !If [IsNative,
+            [
+              Fn::ImportValue: VpcV3-Native-1,
+              Fn::ImportValue: VpcV3-Native-2,
+              Fn::ImportValue: VpcV3-Native-3
+            ],
+            [
+              Fn::ImportValue: VpcV3-PrvRouted-1,
+              Fn::ImportValue: VpcV3-PrvRouted-2,
+              Fn::ImportValue: VpcV3-PrvRouted-3
+            ]
+          ]
+        ]
       SecurityGroups:
-        - !Ref SecurityGroupId
-      Subnets: 
-        - !If [IsPublic, !Ref PublicSubnet1, !Ref PrivateSubnet1]
-        - !If [IsPublic, !Ref PublicSubnet2, !Ref PrivateSubnet2]
+        - !Ref ALBSecurityGroup
+      Scheme: !If [IsPublic, "internet-facing", "internal"]
       Type: application
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-alb"
 
   # HTTPS Listener with SSL Certificate
-  ALBListenerHTTPS:
+  DefaultHttpListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Condition: HasSSL
     Properties:
-      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      LoadBalancerArn: !Ref LoadBalancer
       Port: 443
       Protocol: HTTPS
       Certificates:
         - CertificateArn: !Ref SSLCertificateArn
-      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06  # Modern TLS policy
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
       DefaultActions:
         - Type: fixed-response
           FixedResponseConfig:
@@ -60,20 +93,14 @@ Resources:
             ContentType: "text/plain"
             MessageBody: "ALB HTTPS is working"
 
-  # HTTP Listener that redirects to HTTPS (if SSL is configured)
-  ALBListenerHTTP:
+  # HTTP Listener
+  DefaultHttpListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
-      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      LoadBalancerArn: !Ref LoadBalancer
       Port: 80
       Protocol: HTTP
       DefaultActions:
-        - Type: redirect
-          RedirectConfig:
-            Protocol: "HTTPS"
-            Port: "443"
-            StatusCode: "HTTP_301"
-          Condition: HasSSL
         - Type: fixed-response
           FixedResponseConfig:
             StatusCode: "200"
@@ -82,18 +109,28 @@ Resources:
 
 Conditions:
   IsPublic: !Equals [!Ref SubnetType, "Public"]
+  IsNative: !Equals [!Ref SubnetType, "Native"]
+  IsRoute3: !Equals [!Ref SubnetType, "Route3"]
   HasSSL: !Not [!Equals [!Ref SSLCertificateArn, ""]]
 
 Outputs:
   LoadBalancerDNS:
     Description: ALB DNS Name
-    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Value: !GetAtt LoadBalancer.DNSName
   
   LoadBalancerURL:
     Description: ALB URL
-    Value: !Sub "https://${ApplicationLoadBalancer.DNSName}"
+    Value: !Sub "http://${LoadBalancer.DNSName}"
   
-  HTTPSListener:
-    Description: HTTPS Listener ARN
-    Value: !Ref ALBListenerHTTPS
+  LoadBalancerSecureURL:
+    Description: ALB Secure URL
+    Value: !Sub "https://${LoadBalancer.DNSName}"
     Condition: HasSSL
+  
+  ALBSecurityGroupId:
+    Description: ALB Security Group ID
+    Value: !Ref ALBSecurityGroup
+  
+  LoadBalancerListener:
+    Description: Load Balancer Listener
+    Value: !Ref DefaultHttpListener
